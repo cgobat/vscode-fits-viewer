@@ -38,27 +38,40 @@ function parseFITSImage(arrayBuffer, dataView) {
     const totalBytes = dataSize * bytesPerPixel;
     const src = new Uint8Array(arrayBuffer, offset, totalBytes);
 
+    // dataMin/dataMax are tracked during the per-pixel write loops below so
+    // buildHistogram can skip its own first pass.  Branches that have no
+    // per-pixel loop (e.g. identity-scale int32/float) leave these as
+    // Infinity/-Infinity and buildHistogram falls back to its own scan.
     let data;
+    let dataMin = Infinity, dataMax = -Infinity;
     if (bitpix === 8) {
         // 8-bit: no byte-swap needed
         data = new Int32Array(dataSize);
         for (let i = 0; i < dataSize; i++) {
-            data[i] = src[i] * bscale + bzero;
+            const v = src[i] * bscale + bzero;
+            data[i] = v;
+            if (v < dataMin) dataMin = v;
+            if (v > dataMax) dataMax = v;
         }
     } else if (bitpix === 16) {
-        // 16-bit big-endian → swap bytes, read as Int16, store as Int32
-        const buf = new ArrayBuffer(totalBytes);
-        const dst = new Uint8Array(buf);
-        for (let i = 0; i < totalBytes; i += 2) {
-            dst[i] = src[i + 1];
-            dst[i + 1] = src[i];
-        }
-        const raw = new Int16Array(buf);
+        // 16-bit big-endian → single pass: read big-endian int16 directly from src,
+        // sign-extend with (<< 16 >> 16), apply scale, write to Int32Array.
+        // Eliminates intermediate ArrayBuffer allocation + byte-swap pass.
         data = new Int32Array(dataSize);
         if (bscale === 1 && bzero === 0) {
-            for (let i = 0; i < dataSize; i++) data[i] = raw[i];
+            for (let i = 0; i < dataSize; i++) {
+                const v = (src[i * 2] << 8 | src[i * 2 + 1]) << 16 >> 16;
+                data[i] = v;
+                if (v < dataMin) dataMin = v;
+                if (v > dataMax) dataMax = v;
+            }
         } else {
-            for (let i = 0; i < dataSize; i++) data[i] = raw[i] * bscale + bzero;
+            for (let i = 0; i < dataSize; i++) {
+                const v = ((src[i * 2] << 8 | src[i * 2 + 1]) << 16 >> 16) * bscale + bzero;
+                data[i] = v;
+                if (v < dataMin) dataMin = v;
+                if (v > dataMax) dataMax = v;
+            }
         }
     } else if (bitpix === 32) {
         // 32-bit int big-endian → swap 4 bytes
@@ -72,8 +85,14 @@ function parseFITSImage(arrayBuffer, dataView) {
         }
         data = new Int32Array(buf);
         if (bscale !== 1 || bzero !== 0) {
-            for (let i = 0; i < dataSize; i++) data[i] = data[i] * bscale + bzero;
+            for (let i = 0; i < dataSize; i++) {
+                const v = data[i] * bscale + bzero;
+                data[i] = v;
+                if (v < dataMin) dataMin = v;
+                if (v > dataMax) dataMax = v;
+            }
         }
+        // identity scale: no per-pixel loop, leave dataMin/dataMax as Infinity
     } else if (bitpix === -32) {
         // 32-bit float big-endian → swap 4 bytes
         const buf = new ArrayBuffer(totalBytes);
@@ -86,8 +105,14 @@ function parseFITSImage(arrayBuffer, dataView) {
         }
         data = new Float32Array(buf);
         if (bscale !== 1 || bzero !== 0) {
-            for (let i = 0; i < dataSize; i++) data[i] = data[i] * bscale + bzero;
+            for (let i = 0; i < dataSize; i++) {
+                const v = data[i] * bscale + bzero;
+                data[i] = v;
+                if (v < dataMin) dataMin = v;
+                if (v > dataMax) dataMax = v;
+            }
         }
+        // identity scale: no per-pixel loop, leave dataMin/dataMax as Infinity
     } else if (bitpix === -64) {
         // 64-bit float big-endian → swap 8 bytes
         const buf = new ArrayBuffer(totalBytes);
@@ -104,8 +129,14 @@ function parseFITSImage(arrayBuffer, dataView) {
         }
         data = new Float64Array(buf);
         if (bscale !== 1 || bzero !== 0) {
-            for (let i = 0; i < dataSize; i++) data[i] = data[i] * bscale + bzero;
+            for (let i = 0; i < dataSize; i++) {
+                const v = data[i] * bscale + bzero;
+                data[i] = v;
+                if (v < dataMin) dataMin = v;
+                if (v > dataMax) dataMax = v;
+            }
         }
+        // identity scale: no per-pixel loop, leave dataMin/dataMax as Infinity
     } else {
         throw new Error(`Unsupported BITPIX: ${bitpix}`);
     }
@@ -113,8 +144,7 @@ function parseFITSImage(arrayBuffer, dataView) {
     console.timeLog("parseFITSImage", "parseFITSImageData");
     console.timeEnd("parseFITSImage");
 
-    // console.log(header, normalizedData);
-    return [header, width, height, data];
+    return [header, width, height, data, dataMin, dataMax];
 }
 
 function normalizeData(data, vmin, vmax) {
