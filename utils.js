@@ -54,25 +54,20 @@ function parseFITSImage(arrayBuffer, dataView) {
             if (v > dataMax) dataMax = v;
         }
     } else if (bitpix === 16) {
-        // 16-bit big-endian → swap bytes, read as Int16, store as Int32
-        const buf = new ArrayBuffer(totalBytes);
-        const dst = new Uint8Array(buf);
-        for (let i = 0; i < totalBytes; i += 2) {
-            dst[i] = src[i + 1];
-            dst[i + 1] = src[i];
-        }
-        const raw = new Int16Array(buf);
+        // 16-bit big-endian → single pass: read big-endian int16 directly from src,
+        // sign-extend with (<< 16 >> 16), apply scale, write to Int32Array.
+        // Eliminates intermediate ArrayBuffer allocation + byte-swap pass.
         data = new Int32Array(dataSize);
         if (bscale === 1 && bzero === 0) {
             for (let i = 0; i < dataSize; i++) {
-                const v = raw[i];
+                const v = (src[i * 2] << 8 | src[i * 2 + 1]) << 16 >> 16;
                 data[i] = v;
                 if (v < dataMin) dataMin = v;
                 if (v > dataMax) dataMax = v;
             }
         } else {
             for (let i = 0; i < dataSize; i++) {
-                const v = raw[i] * bscale + bzero;
+                const v = ((src[i * 2] << 8 | src[i * 2 + 1]) << 16 >> 16) * bscale + bzero;
                 data[i] = v;
                 if (v < dataMin) dataMin = v;
                 if (v > dataMax) dataMax = v;
