@@ -180,6 +180,7 @@
       const gridShow = document.getElementById("gridShow");
 
       headerTab.addEventListener("click", () => {
+        if (headerData && headerTable.rows.length === 0) displayHeaderTable(headerData);
         imageGridContainer.style.display = "none";
         headerGridContainer.style.display = "grid";
         searchInput.focus();
@@ -197,6 +198,7 @@
           imageGridContainer.style.display = "grid";
           searchInput.blur();
         } else if (event.key === "ArrowRight") {
+          if (headerData && headerTable.rows.length === 0) displayHeaderTable(headerData);
           imageGridContainer.style.display = "none";
           headerGridContainer.style.display = "grid";
           searchInput.focus();
@@ -971,31 +973,67 @@
       updateGridToggleVisibility(false);
 
       // Histogram / percentile helpers (computed once per image)
-      function buildHistogram(values, nbins = 4096) {
-        let min = Infinity,
-          max = -Infinity;
-        let n = 0;
-        for (let i = 0; i < values.length; i++) {
-          const v = values[i];
-          if (!Number.isFinite(v)) continue;
-          if (v < min) min = v;
-          if (v > max) max = v;
-          n++;
+      // knownMin/knownMax may be supplied by parseFITSImage to skip the first pass.
+      function buildHistogram(values, nbins = 4096, knownMin, knownMax) {
+        const isIntegerArray = values instanceof Int32Array;
+
+        // Adaptive stride: sample large images so the binning pass visits fewer
+        // pixels. min/max always come from the full parse so no values clip.
+        // 4096 bins with 500 k+ samples gives >100 samples/bin — enough for
+        // accurate percentile lookups.
+        const stride = values.length > 2_000_000 ? 4
+                     : values.length >   500_000 ? 2
+                     : 1;
+
+        let min, max, n;
+        if (knownMin !== undefined && knownMin !== Infinity) {
+          // min/max already found during parsing — skip the first scan entirely.
+          min = knownMin;
+          max = knownMax;
+          n = Math.ceil(values.length / stride);
+        } else {
+          // Fallback: find min/max with the same stride.
+          min = Infinity; max = -Infinity; n = 0;
+          if (isIntegerArray) {
+            for (let i = 0; i < values.length; i += stride) {
+              const v = values[i];
+              if (v < min) min = v;
+              if (v > max) max = v;
+            }
+            n = Math.ceil(values.length / stride);
+          } else {
+            for (let i = 0; i < values.length; i += stride) {
+              const v = values[i];
+              if (!Number.isFinite(v)) continue;
+              if (v < min) min = v;
+              if (v > max) max = v;
+              n++;
+            }
+          }
         }
+
         if (n === 0) return null;
-        if (min === max) {
-          // degenerate: make a small range
-          max = min + 1;
-        }
+        if (min === max) max = min + 1;
+
         const counts = new Uint32Array(nbins);
         const binWidth = (max - min) / nbins;
-        for (let i = 0; i < values.length; i++) {
-          const v = values[i];
-          if (!Number.isFinite(v)) continue;
-          let idx = Math.floor((v - min) / binWidth);
-          if (idx < 0) idx = 0;
-          if (idx >= nbins) idx = nbins - 1;
-          counts[idx]++;
+        const invBinWidth = 1 / binWidth;
+        if (isIntegerArray) {
+          // Values are guaranteed >= min so idx >= 0; use | 0 instead of Math.floor.
+          for (let i = 0; i < values.length; i += stride) {
+            let idx = ((values[i] - min) * invBinWidth) | 0;
+            if (idx >= nbins) idx = nbins - 1;
+            counts[idx]++;
+          }
+        } else {
+          for (let i = 0; i < values.length; i += stride) {
+            const v = values[i];
+            if (!Number.isFinite(v)) continue;
+            let idx = ((v - min) * invBinWidth) | 0;
+            if (idx < 0) idx = 0;
+            else if (idx >= nbins) idx = nbins - 1;
+            counts[idx]++;
+          }
         }
         // cumulative
         const cumsum = new Float64Array(nbins);
@@ -1655,15 +1693,15 @@
         console.timeLog("renderMonochromeImage", "DataView created");
 
         // Step 3: Parse the FITS header and data
-        [headerData, imageWidth, imageHeight, imageData] = parseFITSImage(arrayBuffer, dataView);
+        // parseFITSImage also returns dataMin/dataMax tracked during the parse loop,
+        // so buildHistogram can skip its own first pass.
+        let dataMin, dataMax;
+        [headerData, imageWidth, imageHeight, imageData, dataMin, dataMax] = parseFITSImage(arrayBuffer, dataView);
 
-        // Step 4: normalize data for displaying
-        normalizedData = normalizeData(imageData);
-
-        // Step 5: build histogram and set percentile sliders (0-100th percentile)
-        histogram = buildHistogram(imageData, 4096);
-
-        displayHeaderTable(headerData);
+        // Step 4: build histogram for stretch sliders (0-100th percentile)
+        console.time("buildHistogram");
+        histogram = buildHistogram(imageData, 4096, dataMin, dataMax);
+        console.timeEnd("buildHistogram");
 
         console.timeLog("renderMonochromeImage", "FITS header and data parsed");
 

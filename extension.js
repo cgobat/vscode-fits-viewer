@@ -57,7 +57,7 @@ class FITSFileEditor {
                 webviewPanel.webview.onDidReceiveMessage(
                     message => {
                         if (message.command === 'ready') {
-                            // Convert the document URI to a webview URI
+                            // Convert the document URI to a webview URI (kept as fallback)
                             const fitsFileUri = webviewPanel.webview.asWebviewUri(document.uri);
 
                             // Read the autoZScale setting
@@ -68,7 +68,6 @@ class FITSFileEditor {
 
                             log(`Webview ready — sending loadData (autoZScale=${autoZScale}, drawApertureCircles=${doDrawApertureCircles}, useGPU=${useGPU})`);
 
-                            // Send the data to the webview
                             webviewPanel.webview.postMessage({
                                 command: 'loadData',
                                 fileUri: fitsFileUri.toString(),
