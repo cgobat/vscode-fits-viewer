@@ -41,7 +41,8 @@ class FITSFileEditor {
             enableScripts: true,
             localResourceRoots: [
                 vscode.Uri.file(path.dirname(document.uri.fsPath)),
-                vscode.Uri.file(__dirname)
+                vscode.Uri.file(__dirname),
+                vscode.Uri.file(path.join(__dirname, 'lib')),
             ]
         };
 
@@ -153,66 +154,17 @@ class FITSFileEditor {
         const filePath = path.join(__dirname, 'webview.html');
         let content = fs.readFileSync(filePath, 'utf8');
 
-        // Attach d3 as a file URI to avoid </script> tag injection issues
         const d3Uri = webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'd3.v7.min.js')));
-        content = content.replace('</head>', `<script src="${d3Uri}"></script></head>`);
+        const libUri = webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'lib', 'fits-viewer.js')));
+        const styleUri = webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'style.css')));
 
-        const utilsPath = path.join(__dirname, 'utils.js');
-        const utilsContent = fs.readFileSync(utilsPath, 'utf8');
+        const scripts = [
+            `<link rel="stylesheet" href="${styleUri}">`,
+            `<script src="${d3Uri}"></script>`,
+            `<script type="module" src="${libUri}"></script>`,
+        ].join('\n    ');
 
-        const fwhmPath = path.join(__dirname, 'fwhm.js');
-        const fwhmContent = fs.readFileSync(fwhmPath, 'utf8');
-
-        const wcsPath = path.join(__dirname, 'wcs.js');
-        const wcsContent = fs.readFileSync(wcsPath, 'utf8');
-
-        // Attach styles.css
-        const stylePath = path.join(__dirname, 'style.css');
-        const styleContent = fs.readFileSync(stylePath, 'utf8');
-
-        // Console bridge: forwards webview console output to the extension OutputChannel.
-        // Must be injected after vscode (acquireVsCodeApi) is defined in the main script,
-        // and before utils.js so the timing overrides are in place when those functions run.
-        const consoleBridge = `
-(function () {
-    const _timers = {};
-    const _orig = {
-        log: console.log.bind(console),
-        warn: console.warn.bind(console),
-        error: console.error.bind(console),
-        time: console.time.bind(console),
-        timeLog: console.timeLog.bind(console),
-        timeEnd: console.timeEnd.bind(console),
-    };
-    function serialize(args) {
-        return args.map(a => (a !== null && typeof a === 'object') ? JSON.stringify(a) : String(a)).join(' ');
-    }
-    function postLog(level, message) {
-        vscode.postMessage({ command: 'log', level, message });
-    }
-    console.log = function (...args) { postLog('log', serialize(args)); _orig.log(...args); };
-    console.warn = function (...args) { postLog('warn', serialize(args)); _orig.warn(...args); };
-    console.error = function (...args) { postLog('error', serialize(args)); _orig.error(...args); };
-    console.time = function (label) { _timers[label] = performance.now(); _orig.time(label); };
-    console.timeLog = function (label, ...data) {
-        const elapsed = _timers[label] !== undefined ? (performance.now() - _timers[label]).toFixed(1) : '?';
-        postLog('time', label + ': ' + elapsed + 'ms' + (data.length ? ' — ' + data.join(' ') : ''));
-        _orig.timeLog(label, ...data);
-    };
-    console.timeEnd = function (label) {
-        const elapsed = _timers[label] !== undefined ? (performance.now() - _timers[label]).toFixed(1) : '?';
-        postLog('time', label + ': ' + elapsed + 'ms (done)');
-        delete _timers[label];
-        _orig.timeEnd(label);
-    };
-})();`;
-
-        // Inject the console bridge inline immediately after acquireVsCodeApi() so it is
-        // active before any console.time() calls in the main webview script fire.
-        content = content.replace('const vscode = acquireVsCodeApi();', `const vscode = acquireVsCodeApi();\n${consoleBridge}`);
-
-        // Inject utils.js and styles.css content into the webview HTML
-        content = content.replace('</body>', `<script>${utilsContent}</script><script>${fwhmContent}</script><script>${wcsContent}</script><style>${styleContent}</style></body>`);
+        content = content.replace('__FITS_VIEWER_SCRIPTS__', scripts);
         return content;
     }
 }
