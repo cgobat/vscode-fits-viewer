@@ -381,6 +381,29 @@
 
         contextMenu.appendChild(saveOption);
 
+        // "Measure star" — opens the radial profile panel for the right-clicked position.
+        // Only shown when image data is loaded.
+        if (imageData) {
+          const measureOption = document.createElement("div");
+          measureOption.textContent = "Measure star";
+          measureOption.style.cursor = "pointer";
+          measureOption.style.padding = "3px";
+          addHoverEffect(measureOption);
+          measureOption.addEventListener("click", () => {
+            try { restoreStretchControls(); } catch (_) {}
+            if (document.body.contains(contextMenu)) {
+              document.body.removeChild(contextMenu);
+              activeContextMenu = null;
+            }
+            // coords is captured from the contextmenu event earlier in this closure
+            if (!coords) return;
+            const mResult = calculateAdaptiveFWHM(
+              Math.round(coords.px), Math.round(coords.py), plateScale
+            );
+            showRadialProfilePanel(mResult, coords.px, coords.py);
+          });
+          contextMenu.appendChild(measureOption);
+        }
 
         // Move the stretch controls into the context menu while it's open
         const stretchControlsEl = document.getElementById("stretchControls");
@@ -951,6 +974,414 @@
           "Radius.unit": "arcsec",
         });
         return `https://simbad.cfa.harvard.edu/simbad/sim-coo?${params.toString()}`;
+      }
+
+      // Opens (or replaces) a floating panel showing the radial profile of the star
+      // nearest to (imgX, imgY).  fwhmResult must come from calculateAdaptiveFWHM so
+      // that center/background are correctly re-centred on the peak.
+      function showRadialProfilePanel(fwhmResult, imgX, imgY) {
+        const existing = document.getElementById('radialProfilePanel');
+        if (existing) existing.remove();
+
+        const { background, backgroundSigma, peak, fwhm, fwhmMajor, fwhmMinor, posAngle } = fwhmResult;
+        const peakNet = peak - background;
+
+        // Five aperture radii at 1–5 × FWHM (matching AstroImageJ convention)
+        const apRadii = [1, 2, 3, 4, 5].map(n => fwhm * n);
+        const rSource = apRadii[0];  // innermost aperture, shown as the SOURCE region on the chart
+
+        // Sum raw pixel counts within a circular aperture; subtract background per pixel.
+        // Uses the detected star centre, not the raw click position, to avoid off-axis bias.
+        function apertureSum(cx, cy, r) {
+          if (r <= 0 || !imageData) return { rawSum: 0, npix: 0, net: 0 };
+          const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(imageWidth - 1, Math.ceil(cx + r));
+          const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(imageHeight - 1, Math.ceil(cy + r));
+          let sum = 0, n = 0;
+          const r2 = r * r;
+          for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+              const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+              if (dx * dx + dy * dy <= r2) { sum += imageData[y * imageWidth + x]; n++; }
+            }
+          }
+          return { rawSum: sum, npix: n, net: sum - background * n };
+        }
+        const cx = fwhmResult.center.x, cy = fwhmResult.center.y;
+        const apResults = apRadii.map(r => apertureSum(cx, cy, r));
+
+        // Build scatter data: every pixel within plotRadius as [radius, ADU].
+        // plotRadius is at least 6 × FWHM so the background region is visible.
+        const plotRadius = Math.min(
+          Math.max(fwhm * 6, 20),
+          Math.min(imageWidth, imageHeight) / 2
+        );
+        const scatterPts = [];
+        {
+          const sx0 = Math.max(0, Math.floor(cx - plotRadius));
+          const sx1 = Math.min(imageWidth - 1, Math.ceil(cx + plotRadius));
+          const sy0 = Math.max(0, Math.floor(cy - plotRadius));
+          const sy1 = Math.min(imageHeight - 1, Math.ceil(cy + plotRadius));
+          const pr2 = plotRadius * plotRadius;
+          for (let y = sy0; y <= sy1; y++) {
+            for (let x = sx0; x <= sx1; x++) {
+              const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+              const r2 = dx * dx + dy * dy;
+              if (r2 <= pr2) scatterPts.push([Math.sqrt(r2), imageData[y * imageWidth + x]]);
+            }
+          }
+        }
+
+        // Panel container
+        const panel = document.createElement('div');
+        panel.id = 'radialProfilePanel';
+        Object.assign(panel.style, {
+          position: 'fixed', top: '60px', right: '20px',
+          background: '#1e1e1e', color: '#d4d4d4',
+          border: '1px solid #555', borderRadius: '6px',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+          zIndex: '2000', width: '460px',
+          fontFamily: 'monospace', fontSize: '13px', userSelect: 'none',
+        });
+
+        // Header / drag handle
+        const hdr = document.createElement('div');
+        Object.assign(hdr.style, {
+          background: '#2d2d2d', padding: '5px 10px',
+          borderRadius: '6px 6px 0 0', cursor: 'move',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          borderBottom: '1px solid #444',
+        });
+        const titleSpan = document.createElement('span');
+        titleSpan.style.fontWeight = 'bold'; titleSpan.style.fontSize = '12px';
+        titleSpan.innerHTML = `Radial Profile <span style="color:#888;font-weight:normal">(${Math.round(imgX)}, ${Math.round(imgY)})</span>`;
+        const pCloseBtn = document.createElement('button');
+        pCloseBtn.textContent = '\u00d7';
+        Object.assign(pCloseBtn.style, { background: 'none', border: 'none', color: '#aaa', fontSize: '16px', cursor: 'pointer', padding: '0 2px', lineHeight: '1' });
+        hdr.appendChild(titleSpan); hdr.appendChild(pCloseBtn);
+        panel.appendChild(hdr);
+
+        // Drag logic
+        let _pdx = 0, _pdy = 0, _pdrag = false;
+        hdr.addEventListener('mousedown', e => {
+          _pdrag = true;
+          const br = panel.getBoundingClientRect();
+          _pdx = e.clientX - br.left; _pdy = e.clientY - br.top;
+          e.preventDefault();
+        });
+        const _pmm = e => {
+          if (!_pdrag) return;
+          panel.style.left = (e.clientX - _pdx) + 'px';
+          panel.style.top = (e.clientY - _pdy) + 'px';
+          panel.style.right = 'auto';
+        };
+        const _pmu = () => { _pdrag = false; };
+        document.addEventListener('mousemove', _pmm);
+        document.addEventListener('mouseup', _pmu);
+        const cleanup = () => {
+          document.removeEventListener('mousemove', _pmm);
+          document.removeEventListener('mouseup', _pmu);
+        };
+        pCloseBtn.onclick = () => { cleanup(); panel.remove(); };
+
+        const pbody = document.createElement('div');
+        pbody.style.padding = '8px';
+        panel.appendChild(pbody);
+
+        // --- FWHM info line above chart ---
+        const infoLine = document.createElement('div');
+        infoLine.style.cssText = 'font-size:11px;color:#888;margin-bottom:3px;text-align:center';
+        const fwhmInfo = fwhm > 0
+          ? `FWHM: ${formatNumber(fwhm, 2)} px${plateScale ? '  /  ' + formatNumber(fwhm * plateScale, 2) + '\u2033' : ''}`
+          : 'FWHM: \u2014';
+        infoLine.textContent = fwhmInfo;
+        pbody.appendChild(infoLine);
+
+        // Chart canvas
+        const chartW = 440, chartH = 280;
+        const padL = 56, padR = 8, padT = 20, padB = 30;
+        const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
+
+        const dpr = window.devicePixelRatio || 1;
+        const chartEl = document.createElement('canvas');
+        chartEl.width = chartW * dpr; chartEl.height = chartH * dpr;
+        chartEl.style.width = chartW + 'px'; chartEl.style.height = chartH + 'px';
+        chartEl.style.display = 'block';
+        pbody.appendChild(chartEl);
+        const cc = chartEl.getContext('2d');
+        cc.scale(dpr, dpr);
+
+        function pfmt(v) {
+          if (v === undefined || v === null || isNaN(v)) return '\u2014';
+          if (Math.abs(v) >= 1e6) return v.toExponential(2);
+          if (Math.abs(v) >= 1e3) return Math.round(v).toLocaleString();
+          if (Math.abs(v) >= 1) return formatNumber(v, 1);
+          return v.toPrecision(3);
+        }
+
+        // Axis bounds and tooltip state are hoisted here so both drawScatterChart
+        // and the mousemove handler share the same values.
+        let _tooltip = null;  // null, or { r, rawV, fitV } when hovering
+        let yLo = 0, yHi = 1, yRange = 1, _step = 1;
+        {
+          // Round axis limits to "nice" multiples (1/2/5 × 10^n) so ticks land on
+          // clean values.  yLo floors to the nearest tick below the data; yHi adds
+          // one step of headroom above the peak.
+          function _niceNum(range, round) {
+            if (range <= 0) return 1;
+            const exp = Math.floor(Math.log10(range));
+            const frac = range / Math.pow(10, exp);
+            let nice;
+            if (round) { nice = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10; }
+            else        { nice = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10; }
+            return nice * Math.pow(10, exp);
+          }
+          let dataMin = Infinity, dataMax = -Infinity;
+          for (const [, v] of scatterPts) { if (v < dataMin) dataMin = v; if (v > dataMax) dataMax = v; }
+          _step = _niceNum(_niceNum(dataMax - dataMin || 1, false) / 4, true);
+          yLo = Math.floor(Math.min(dataMin, background - 3 * backgroundSigma) / _step) * _step;
+          yHi = (Math.ceil(dataMax / _step) + 1) * _step;
+          yRange = yHi - yLo;
+        }
+
+        function drawScatterChart() {
+          cc.clearRect(0, 0, chartW, chartH);
+
+          if (scatterPts.length === 0) {
+            cc.fillStyle = '#666'; cc.font = '12px monospace'; cc.textAlign = 'center';
+            cc.fillText('No data', chartW / 2, chartH / 2); return;
+          }
+
+          const xs = r => padL + (r / plotRadius) * plotW;
+          const ys = v => padT + plotH - ((v - yLo) / yRange) * plotH;
+          const ysClamp = v => Math.max(padT, Math.min(padT + plotH, ys(v)));
+
+          // SOURCE region fill (0 → rSource)
+          cc.fillStyle = 'rgba(200, 50, 50, 0.07)';
+          cc.fillRect(xs(0), padT, xs(rSource) - xs(0), plotH);
+
+          // Scatter points — blue like AstroImageJ
+          cc.fillStyle = 'rgba(80, 140, 220, 0.55)';
+          for (const [r, v] of scatterPts) {
+            if (r > plotRadius) continue;
+            const px = xs(r), py = ysClamp(v);
+            cc.fillRect(px - 2, py - 2, 4, 4);
+          }
+
+          // Gaussian PSF fit curve (pink/magenta like AstroImageJ)
+          if (fwhm > 0 && peakNet > 0) {
+            cc.beginPath();
+            const nPts = 300;
+            for (let i = 0; i <= nPts; i++) {
+              const r = (i / nPts) * plotRadius;
+              const v = background + peakNet * Math.exp(-4 * Math.LN2 * r * r / (fwhm * fwhm));
+              const px = xs(r), py = ysClamp(v);
+              i === 0 ? cc.moveTo(px, py) : cc.lineTo(px, py);
+            }
+            cc.strokeStyle = '#e040fb'; cc.lineWidth = 2.5; cc.setLineDash([]); cc.stroke();
+          }
+
+          // Helper: draw text with a dark backing rectangle for readability
+          function labelWithBg(text, x, y, baseline, color) {
+            cc.textBaseline = baseline;
+            const m = cc.measureText(text);
+            const th = 10, pad = 2;
+            const bx = x - m.width / 2 - pad;
+            const by = baseline === 'top' ? y : y - th;
+            cc.fillStyle = 'rgba(20,20,20,0.75)';
+            cc.fillRect(bx, by, m.width + pad * 2, th + pad);
+            cc.fillStyle = color;
+            cc.fillText(text, x, y);
+          }
+
+          // HWHM vertical dashed line (green) — radial FWHM half-radius
+          if (fwhm > 0 && fwhm / 2 <= plotRadius) {
+            const xhw = xs(fwhm / 2);
+            cc.beginPath(); cc.moveTo(xhw, padT); cc.lineTo(xhw, padT + plotH);
+            cc.strokeStyle = '#66bb6a'; cc.lineWidth = 1.5; cc.setLineDash([4, 3]); cc.stroke(); cc.setLineDash([]);
+            cc.font = 'bold 10px monospace'; cc.textAlign = 'center';
+            labelWithBg('HWHM', xhw, padT + 1, 'top', '#66bb6a');
+            labelWithBg(formatNumber(fwhm / 2, 2), xhw, padT + 13, 'top', '#66bb6a');
+          }
+
+          // Aperture boundary vertical lines (red) at 1–5 × FWHM
+          apRadii.forEach((r, i) => {
+            if (r <= 0 || r > plotRadius) return;
+            const x = xs(r);
+            cc.beginPath(); cc.moveTo(x, padT); cc.lineTo(x, padT + plotH);
+            cc.strokeStyle = '#ef5350'; cc.lineWidth = 1.5; cc.setLineDash([]); cc.stroke();
+            cc.font = '10px monospace'; cc.textAlign = 'center';
+            labelWithBg(`${i + 1}\u00d7`, x, padT + 1, 'top', '#ef5350');
+          });
+
+          // Background level horizontal dotted line
+          const yBg = ys(background);
+          if (yBg >= padT && yBg <= padT + plotH) {
+            cc.beginPath(); cc.moveTo(padL, yBg); cc.lineTo(padL + plotW, yBg);
+            cc.strokeStyle = 'rgba(255,152,0,0.5)'; cc.lineWidth = 1; cc.setLineDash([3, 3]); cc.stroke(); cc.setLineDash([]);
+          }
+
+          // Axes
+          cc.strokeStyle = '#555'; cc.lineWidth = 1; cc.setLineDash([]);
+          cc.beginPath(); cc.moveTo(padL, padT); cc.lineTo(padL, padT + plotH); cc.lineTo(padL + plotW, padT + plotH); cc.stroke();
+
+          // X ticks + label
+          cc.fillStyle = '#777'; cc.font = '10px monospace'; cc.textAlign = 'center'; cc.textBaseline = 'top';
+          const nXTicks = Math.min(8, Math.floor(plotRadius));
+          const xStep = Math.ceil(plotRadius / nXTicks);
+          for (let rv = 0; rv <= plotRadius; rv += xStep) {
+            const x = xs(rv);
+            if (x > padL + plotW + 1) break;
+            cc.beginPath(); cc.moveTo(x, padT + plotH); cc.lineTo(x, padT + plotH + 3); cc.stroke();
+            cc.fillText(Math.round(rv), x, padT + plotH + 4);
+          }
+          cc.fillStyle = '#666'; cc.fillText('Radius [pixels]', padL + plotW / 2, padT + plotH + 17);
+
+          // Y ticks — use the same _step computed for the axis range above
+          cc.textAlign = 'right'; cc.textBaseline = 'middle';
+          for (let v = yLo; v <= yHi + _step * 0.01; v += _step) {
+            v = parseFloat(v.toPrecision(12));
+            const y = ys(v);
+            if (y < padT - 2 || y > padT + plotH + 2) continue;
+            cc.beginPath(); cc.moveTo(padL - 3, y); cc.lineTo(padL, y); cc.stroke();
+            cc.fillStyle = '#777'; cc.fillText(pfmt(v), padL - 5, y);
+          }
+
+          // Y axis label
+          cc.save();
+          cc.translate(11, padT + plotH / 2); cc.rotate(-Math.PI / 2);
+          cc.textAlign = 'center'; cc.font = '10px monospace'; cc.fillStyle = '#666';
+          cc.fillText('ADU', 0, 0);
+          cc.restore();
+
+          // Tooltip crosshair + info box
+          if (_tooltip) {
+            const { r: tr, rawV, fitV } = _tooltip;
+            const tx = xs(tr);
+            // Vertical crosshair
+            cc.beginPath(); cc.moveTo(tx, padT); cc.lineTo(tx, padT + plotH);
+            cc.strokeStyle = 'rgba(255,255,255,0.25)'; cc.lineWidth = 1; cc.setLineDash([3, 3]); cc.stroke(); cc.setLineDash([]);
+            // Horizontal crosshair at raw point
+            const ty = ysClamp(rawV);
+            cc.beginPath(); cc.moveTo(padL, ty); cc.lineTo(padL + plotW, ty);
+            cc.strokeStyle = 'rgba(255,255,255,0.15)'; cc.lineWidth = 1; cc.setLineDash([3, 3]); cc.stroke(); cc.setLineDash([]);
+            // Dot on raw point
+            cc.beginPath(); cc.arc(tx, ty, 3.5, 0, Math.PI * 2);
+            cc.fillStyle = 'rgba(100,160,255,0.9)'; cc.fill();
+            // Dot on fit curve
+            if (fitV !== null) {
+              const fy = ysClamp(fitV);
+              cc.beginPath(); cc.arc(tx, fy, 3.5, 0, Math.PI * 2);
+              cc.fillStyle = 'rgba(224,64,251,0.9)'; cc.fill();
+            }
+            // Info box
+            const lines = [
+              `r = ${formatNumber(tr, 2)} px`,
+              `raw \u2248 ${pfmt(rawV)}`,
+              ...(fitV !== null ? [`fit = ${pfmt(fitV)}`] : []),
+            ];
+            cc.font = '10px monospace';
+            const lineH = 13, boxPad = 5;
+            const boxW = Math.max(...lines.map(l => cc.measureText(l).width)) + boxPad * 2;
+            const boxH = lines.length * lineH + boxPad * 2;
+            let bx = tx + 8, by = ty - boxH / 2;
+            if (bx + boxW > padL + plotW) bx = tx - boxW - 8;
+            if (by < padT) by = padT;
+            if (by + boxH > padT + plotH) by = padT + plotH - boxH;
+            cc.fillStyle = 'rgba(20,20,20,0.85)';
+            cc.beginPath(); cc.roundRect(bx, by, boxW, boxH, 3); cc.fill();
+            cc.strokeStyle = 'rgba(255,255,255,0.15)'; cc.lineWidth = 0.5; cc.setLineDash([]);
+            cc.stroke();
+            const colors = ['#aaa', 'rgba(100,160,255,0.9)', 'rgba(224,64,251,0.9)'];
+            lines.forEach((l, i) => {
+              cc.fillStyle = colors[i] || '#aaa'; cc.textAlign = 'left'; cc.textBaseline = 'top';
+              cc.fillText(l, bx + boxPad, by + boxPad + i * lineH);
+            });
+          }
+        }
+
+        drawScatterChart();
+
+        // Nearest-point tooltip: find the scatter point closest to the cursor in
+        // 2D canvas space (not just by radius) so hovering near a bright point
+        // selects it rather than a background pixel at the same radial distance.
+        chartEl.addEventListener('mousemove', e => {
+          const rect = chartEl.getBoundingClientRect();
+          const mx = (e.clientX - rect.left) * (chartW / rect.width);
+          const my = (e.clientY - rect.top)  * (chartH / rect.height);
+          if (mx < padL || mx > padL + plotW || my < padT || my > padT + plotH) {
+            if (_tooltip) { _tooltip = null; drawScatterChart(); }
+            return;
+          }
+          let bestDist = Infinity, bestV = null, bestR = (mx - padL) / plotW * plotRadius;
+          for (const [r, v] of scatterPts) {
+            const screenX = (r / plotRadius) * plotW;
+            const screenY = plotH - ((v - yLo) / yRange) * plotH;
+            const d = (mx - padL - screenX) ** 2 + (my - padT - screenY) ** 2;
+            if (d < bestDist) { bestDist = d; bestV = v; bestR = r; }
+          }
+          const fitV = (fwhm > 0 && peakNet > 0)
+            ? background + peakNet * Math.exp(-4 * Math.LN2 * bestR * bestR / (fwhm * fwhm))
+            : null;
+          _tooltip = { r: bestR, rawV: bestV, fitV };
+          drawScatterChart();
+        });
+        chartEl.addEventListener('mouseleave', () => {
+          if (_tooltip) { _tooltip = null; drawScatterChart(); }
+        });
+
+        // --- Stats panel ---
+        const statsDiv = document.createElement('div');
+        Object.assign(statsDiv.style, { marginTop: '6px', borderTop: '1px solid #333', paddingTop: '6px', fontSize: '12px', lineHeight: '1.7' });
+
+        function pRow(label, val) {
+          const d = document.createElement('div');
+          d.style.cssText = 'display:flex;justify-content:space-between;padding:0 2px';
+          d.innerHTML = `<span style="color:#888">${label}</span><span style="color:#d4d4d4">${val}</span>`;
+          return d;
+        }
+        function pSection(text) {
+          const d = document.createElement('div');
+          d.style.cssText = 'color:#aaa;font-size:11px;font-weight:bold;margin:4px 0 2px;padding:0 2px;text-transform:uppercase;letter-spacing:.05em';
+          d.textContent = text;
+          return d;
+        }
+
+        const fwhmPxStr = fwhm > 0 ? `${formatNumber(fwhm, 2)} px` : '\u2014';
+        const fwhmArcsecStr = (fwhm > 0 && plateScale) ? `\u2002/\u2002${formatNumber(fwhm * plateScale, 2)}"` : '';
+
+        const fwhmMajStr = fwhmMajor > 0 ? `${formatNumber(fwhmMajor, 2)} px${plateScale ? '  /  ' + formatNumber(fwhmMajor * plateScale, 2) + '\u2033' : ''}` : '\u2014';
+        const fwhmMinStr = fwhmMinor > 0 ? `${formatNumber(fwhmMinor, 2)} px${plateScale ? '  /  ' + formatNumber(fwhmMinor * plateScale, 2) + '\u2033' : ''}` : '\u2014';
+        const elongStr = (fwhmMajor > 0 && fwhmMinor > 0)
+          ? formatNumber(fwhmMajor / fwhmMinor, 2)
+          : '\u2014';
+        const paStr = fwhmMajor > 0 ? `${formatNumber(posAngle, 1)}\u00b0` : '\u2014';
+
+        statsDiv.appendChild(pSection('PSF'));
+        statsDiv.appendChild(pRow('FWHM (radial)', fwhmPxStr + fwhmArcsecStr));
+        statsDiv.appendChild(pRow('FWHM max', fwhmMajStr));
+        statsDiv.appendChild(pRow('FWHM min', fwhmMinStr));
+        statsDiv.appendChild(pRow('Elongation a/b', elongStr));
+        statsDiv.appendChild(pRow('Position angle', paStr));
+        statsDiv.appendChild(pRow('Peak', `${pfmt(peak)} ADU`));
+        statsDiv.appendChild(pRow('Peak \u2212 bg', `${pfmt(peakNet)} ADU`));
+        statsDiv.appendChild(pRow('Background', `${pfmt(background)} \u00b1 ${pfmt(backgroundSigma)} ADU`));
+
+        statsDiv.appendChild(pSection('Aperture photometry'));
+        const apTableHdr = document.createElement('div');
+        apTableHdr.style.cssText = 'display:grid;grid-template-columns:28px 44px 68px 1fr 52px;gap:2px;padding:0 2px;color:#666;font-size:11px';
+        apTableHdr.innerHTML = '<span>ap</span><span>FWHM</span><span>radius</span><span>bg-sub counts</span><span>area</span>';
+        statsDiv.appendChild(apTableHdr);
+        const subNames = ['\u2081','\u2082','\u2083','\u2084','\u2085'];
+        apRadii.forEach((r, i) => {
+          const apResult = apResults[i];
+          const row = document.createElement('div');
+          row.style.cssText = 'display:grid;grid-template-columns:28px 44px 68px 1fr 52px;gap:2px;padding:0 2px';
+          row.innerHTML = `<span style="color:#888">r${subNames[i]}</span><span style="color:#999">${i + 1}\u00d7</span><span style="color:#777">${formatNumber(r, 1)} px</span><span style="color:#d4d4d4">${pfmt(apResult.net)}</span><span style="color:#555">${apResult.npix} px</span>`;
+          statsDiv.appendChild(row);
+        });
+
+        pbody.appendChild(statsDiv);
+        document.body.appendChild(panel);
       }
 
       function eventToImageCoords(clientX, clientY) {
@@ -1939,7 +2370,7 @@
           const snr = fwhmResult.backgroundSigma > 0
             ? (peak - background) / fwhmResult.backgroundSigma
             : (background > 0 ? (peak / background - 1) * 100 : 0);
-          // Reject hot pixels: real stars have sharpness > ~0.3 (PSF spreads
+          // Reject hot pixels: real stars have sharpness > ~0.2 (PSF spreads
           // light to neighbors), while hot pixels drop to ~0 at bin 1.
           if (snr > 5 && fwhmResult.fwhm > 0 && fwhmResult.sharpness > 0.2) {
             if (doDrawApertureCircles) {
