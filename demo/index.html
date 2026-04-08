@@ -1,148 +1,162 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FITS Viewer Demo</title>
-    <link rel="stylesheet" href="../style.css" />
-    <style>
-      body {
-        margin: 0; padding: 0;
-        background: var(--vscode-editor-background, #fff);
-        color: var(--vscode-editor-foreground, #333);
-      }
-      #controls {
-        position: fixed;
-        top: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 1000;
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        padding: 8px 16px;
-        border-radius: 0 0 8px 8px;
-        background: var(--vscode-editor-background, #fff);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        transition: opacity 0.3s, transform 0.3s;
-      }
-      #controls.hidden {
-        opacity: 0;
-        transform: translateX(-50%) translateY(-100%);
-        pointer-events: none;
-      }
-      #controls input[type="file"] { color: inherit; }
-      #controls label {
-        font-family: sans-serif;
-        font-size: 13px;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      #viewer { width: 100vw; height: 100vh; }
-    </style>
-    <!-- Apply theme tokens before first paint to avoid flash -->
-    <script>
-      (function () {
-        const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const tokens = dark ? {
-          '--vscode-editor-foreground':            '#cccccc',
-          '--vscode-editor-background':            '#1e1e1e',
-          '--vscode-progressBar-background':       '#0078d4',
-          '--vscode-commandCenter-inactiveBorder': 'rgba(255,255,255,0.15)',
-        } : {
-          '--vscode-editor-foreground':            '#333333',
-          '--vscode-editor-background':            '#ffffff',
-          '--vscode-progressBar-background':       '#0078d4',
-          '--vscode-commandCenter-inactiveBorder': 'rgba(0,0,0,0.15)',
-        };
-        for (const [k, v] of Object.entries(tokens))
-          document.documentElement.style.setProperty(k, v);
-      })();
-    </script>
-  </head>
-  <body>
-    <div id="controls">
-      <input type="file" id="fileInput" accept=".fits,.fit,.fts" />
-      <label><input type="checkbox" id="autoZScale" checked /> Auto Z-scale</label>
-      <label><input type="checkbox" id="useGPU" checked /> GPU</label>
-      <label><input type="checkbox" id="aperture" checked /> Aperture circles</label>
-    </div>
-    <div id="viewer"></div>
 
-    <script src="../d3.v7.min.js"></script>
-    <script type="module">
-      import { FITSViewer } from '../lib/fits-viewer.js';
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FITS Viewer Demo</title>
+  <link rel="stylesheet" href="../style.css" />
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--vscode-editor-background, #fff);
+      color: var(--vscode-editor-foreground, #333);
+    }
 
-      const THEMES = {
-        dark:  { profileColor: 'rgba(100,160,255,0.85)', gridColor: '#cccccc' },
-        light: { profileColor: 'rgba(0,80,200,0.85)',    gridColor: '#333333' },
+    #controls {
+      position: fixed;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 16px;
+      border-radius: 0 0 8px 8px;
+      background: var(--vscode-editor-background, #fff);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      transition: opacity 0.3s, transform 0.3s;
+    }
+
+    #controls.hidden {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-100%);
+      pointer-events: none;
+    }
+
+    #controls input[type="file"] {
+      color: inherit;
+    }
+
+    #controls label {
+      font-family: sans-serif;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    #viewer {
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+  <!-- Apply theme tokens before first paint to avoid flash -->
+  <script>
+    (function () {
+      const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const tokens = dark ? {
+        '--vscode-editor-foreground': '#cccccc',
+        '--vscode-editor-background': '#1e1e1e',
+        '--vscode-progressBar-background': '#0078d4',
+        '--vscode-commandCenter-inactiveBorder': 'rgba(255,255,255,0.15)',
+      } : {
+        '--vscode-editor-foreground': '#333333',
+        '--vscode-editor-background': '#ffffff',
+        '--vscode-progressBar-background': '#0078d4',
+        '--vscode-commandCenter-inactiveBorder': 'rgba(0,0,0,0.15)',
       };
+      for (const [k, v] of Object.entries(tokens))
+        document.documentElement.style.setProperty(k, v);
+    })();
+  </script>
+</head>
 
-      function themeColors() {
-        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const t = isDark ? THEMES.dark : THEMES.light;
-        const tokens = isDark ? {
-          '--vscode-editor-foreground':            '#cccccc',
-          '--vscode-editor-background':            '#1e1e1e',
-          '--vscode-progressBar-background':       '#0078d4',
-          '--vscode-commandCenter-inactiveBorder': 'rgba(255,255,255,0.15)',
-        } : {
-          '--vscode-editor-foreground':            '#333333',
-          '--vscode-editor-background':            '#ffffff',
-          '--vscode-progressBar-background':       '#0078d4',
-          '--vscode-commandCenter-inactiveBorder': 'rgba(0,0,0,0.15)',
-        };
-        for (const [k, v] of Object.entries(tokens))
-          document.documentElement.style.setProperty(k, v);
-        return t;
-      }
+<body>
+  <div id="controls">
+    <input type="file" id="fileInput" accept=".fits,.fit,.fts" />
+    <label><input type="checkbox" id="autoZScale" checked /> Auto Z-scale</label>
+    <label><input type="checkbox" id="useGPU" checked /> GPU</label>
+    <label><input type="checkbox" id="aperture" checked /> Aperture circles</label>
+  </div>
+  <div id="viewer"></div>
 
-      let theme = themeColors();
+  <script src="../d3.v7.min.js"></script>
+  <script type="module">
+    import { FITSViewer } from '../lib/fits-viewer.js';
 
-      const viewer = new FITSViewer(document.getElementById('viewer'), {
-        onOpenExternal: (url) => window.open(url, '_blank'),
-        profileColor: theme.profileColor,
-        gridColor:    theme.gridColor,
-      });
+    const THEMES = {
+      dark: { profileColor: 'rgba(100,160,255,0.85)', gridColor: '#cccccc' },
+      light: { profileColor: 'rgba(0,80,200,0.85)', gridColor: '#333333' },
+    };
 
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-        theme = themeColors();
-        viewer.options.profileColor = theme.profileColor;
-        viewer.options.gridColor    = theme.gridColor;
-        viewer._updateColor();
-      });
+    function themeColors() {
+      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const t = isDark ? THEMES.dark : THEMES.light;
+      const tokens = isDark ? {
+        '--vscode-editor-foreground': '#cccccc',
+        '--vscode-editor-background': '#1e1e1e',
+        '--vscode-progressBar-background': '#0078d4',
+        '--vscode-commandCenter-inactiveBorder': 'rgba(255,255,255,0.15)',
+      } : {
+        '--vscode-editor-foreground': '#333333',
+        '--vscode-editor-background': '#ffffff',
+        '--vscode-progressBar-background': '#0078d4',
+        '--vscode-commandCenter-inactiveBorder': 'rgba(0,0,0,0.15)',
+      };
+      for (const [k, v] of Object.entries(tokens))
+        document.documentElement.style.setProperty(k, v);
+      return t;
+    }
 
-      const controls = document.getElementById('controls');
+    let theme = themeColors();
 
-      document.getElementById('fileInput').addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const buffer = await file.arrayBuffer();
-        await viewer.loadFromArrayBuffer(buffer, file.name);
+    const viewer = new FITSViewer(document.getElementById('viewer'), {
+      onOpenExternal: (url) => window.open(url, '_blank'),
+      profileColor: theme.profileColor,
+      gridColor: theme.gridColor,
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      theme = themeColors();
+      viewer.options.profileColor = theme.profileColor;
+      viewer.options.gridColor = theme.gridColor;
+      viewer._updateColor();
+    });
+
+    const controls = document.getElementById('controls');
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const buffer = await file.arrayBuffer();
+      await viewer.loadFromArrayBuffer(buffer, file.name);
+      controls.classList.add('hidden');
+    });
+
+    // Reveal controls when mouse is near the top edge
+    document.addEventListener('mousemove', (e) => {
+      if (e.clientY < 20) {
+        controls.classList.remove('hidden');
+      } else if (e.clientY > 80) {
         controls.classList.add('hidden');
-      });
-
-      // Reveal controls when mouse is near the top edge
-      document.addEventListener('mousemove', (e) => {
-        if (e.clientY < 20) {
-          controls.classList.remove('hidden');
-        } else if (e.clientY > 80) {
-          controls.classList.add('hidden');
-        }
-      });
-
-      function syncSettings() {
-        viewer.updateSettings({
-          autoZScale:           document.getElementById('autoZScale').checked,
-          useGPU:               document.getElementById('useGPU').checked,
-          drawApertureCircles:  document.getElementById('aperture').checked,
-        });
       }
+    });
 
-      document.getElementById('autoZScale').addEventListener('change', syncSettings);
-      document.getElementById('useGPU').addEventListener('change', syncSettings);
-      document.getElementById('aperture').addEventListener('change', syncSettings);
-    </script>
-  </body>
+    function syncSettings() {
+      viewer.updateSettings({
+        autoZScale: document.getElementById('autoZScale').checked,
+        useGPU: document.getElementById('useGPU').checked,
+        drawApertureCircles: document.getElementById('aperture').checked,
+      });
+    }
+
+    document.getElementById('autoZScale').addEventListener('change', syncSettings);
+    document.getElementById('useGPU').addEventListener('change', syncSettings);
+    document.getElementById('aperture').addEventListener('change', syncSettings);
+  </script>
+</body>
+
 </html>

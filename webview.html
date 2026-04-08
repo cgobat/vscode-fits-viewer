@@ -1,77 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Simple FITS Viewer</title>
-  </head>
-  <body style="margin:0;padding:0;width:100vw;height:100vh;overflow:hidden">
-    <div id="fitsViewerRoot" style="width:100%;height:100%"></div>
 
-    <!-- Classic script: must call acquireVsCodeApi() before any module loads -->
-    <script>
-      const vscode = acquireVsCodeApi();
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple FITS Viewer</title>
+</head>
 
-      // Console bridge: forwards webview console output to the extension OutputChannel.
-      (function () {
-        const _timers = {};
-        const _orig = {
-          log: console.log.bind(console),
-          warn: console.warn.bind(console),
-          error: console.error.bind(console),
-          time: console.time.bind(console),
-          timeLog: console.timeLog.bind(console),
-          timeEnd: console.timeEnd.bind(console),
-        };
-        function serialize(args) {
-          return args.map(a => (a !== null && typeof a === 'object') ? JSON.stringify(a) : String(a)).join(' ');
-        }
-        function postLog(level, message) {
-          vscode.postMessage({ command: 'log', level, message });
-        }
-        console.log   = function (...args) { postLog('log',   serialize(args)); _orig.log(...args); };
-        console.warn  = function (...args) { postLog('warn',  serialize(args)); _orig.warn(...args); };
-        console.error = function (...args) { postLog('error', serialize(args)); _orig.error(...args); };
-        console.time  = function (label) { _timers[label] = performance.now(); _orig.time(label); };
-        console.timeLog = function (label, ...data) {
-          const elapsed = _timers[label] !== undefined ? (performance.now() - _timers[label]).toFixed(1) : '?';
-          postLog('time', label + ': ' + elapsed + 'ms' + (data.length ? ' — ' + data.join(' ') : ''));
-          _orig.timeLog(label, ...data);
-        };
-        console.timeEnd = function (label) {
-          const elapsed = _timers[label] !== undefined ? (performance.now() - _timers[label]).toFixed(1) : '?';
-          postLog('time', label + ': ' + elapsed + 'ms (done)');
-          delete _timers[label];
-          _orig.timeEnd(label);
-        };
-      })();
+<body style="margin:0;padding:0;width:100vw;height:100vh;overflow:hidden">
+  <div id="fitsViewerRoot" style="width:100%;height:100%"></div>
 
-      // VSCode bridge: called by the module once FITSViewer is instantiated.
-      window.__vscodeOnViewerReady = function (viewer) {
-        window.addEventListener('message', (event) => {
-          const msg = event.data;
-          if (msg.command === 'loadData') {
-            viewer.updateSettings({
-              autoZScale: msg.autoZScale,
-              drawApertureCircles: msg.doDrawApertureCircles,
-              useGPU: msg.useGPU,
-            });
-            viewer.load(msg.fileUri);
-          }
-          if (msg.command === 'settingChanged') {
-            viewer.updateSettings({
-              autoZScale: msg.autoZScale,
-              drawApertureCircles: msg.doDrawApertureCircles,
-              useGPU: msg.useGPU,
-            });
-          }
-        });
-        vscode.postMessage({ command: 'ready' });
+  <!-- Classic script: must call acquireVsCodeApi() before any module loads -->
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    // Console bridge: forwards webview console output to the extension OutputChannel.
+    (function () {
+      const _timers = {};
+      const _orig = {
+        log: console.log.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+        time: console.time.bind(console),
+        timeLog: console.timeLog.bind(console),
+        timeEnd: console.timeEnd.bind(console),
       };
-    </script>
+      function serialize(args) {
+        return args.map(a => (a !== null && typeof a === 'object') ? JSON.stringify(a) : String(a)).join(' ');
+      }
+      function postLog(level, message) {
+        vscode.postMessage({ command: 'log', level, message });
+      }
+      console.log = function (...args) { postLog('log', serialize(args)); _orig.log(...args); };
+      console.warn = function (...args) { postLog('warn', serialize(args)); _orig.warn(...args); };
+      console.error = function (...args) { postLog('error', serialize(args)); _orig.error(...args); };
+      console.time = function (label) { _timers[label] = performance.now(); _orig.time(label); };
+      console.timeLog = function (label, ...data) {
+        const elapsed = _timers[label] !== undefined ? (performance.now() - _timers[label]).toFixed(1) : '?';
+        postLog('time', label + ': ' + elapsed + 'ms' + (data.length ? ' — ' + data.join(' ') : ''));
+        _orig.timeLog(label, ...data);
+      };
+      console.timeEnd = function (label) {
+        const elapsed = _timers[label] !== undefined ? (performance.now() - _timers[label]).toFixed(1) : '?';
+        postLog('time', label + ': ' + elapsed + 'ms (done)');
+        delete _timers[label];
+        _orig.timeEnd(label);
+      };
+    })();
 
-    <!-- D3 injected here by extension.js -->
-    <!-- fits-viewer module injected here by extension.js -->
-    __FITS_VIEWER_SCRIPTS__
-  </body>
+    // VSCode bridge: called by the module once FITSViewer is instantiated.
+    window.__vscodeOnViewerReady = function (viewer) {
+      window.addEventListener('message', (event) => {
+        const msg = event.data;
+        if (msg.command === 'loadData') {
+          viewer.updateSettings({
+            autoZScale: msg.autoZScale,
+            drawApertureCircles: msg.doDrawApertureCircles,
+            useGPU: msg.useGPU,
+          });
+          viewer.load(msg.fileUri);
+        }
+        if (msg.command === 'settingChanged') {
+          viewer.updateSettings({
+            autoZScale: msg.autoZScale,
+            drawApertureCircles: msg.doDrawApertureCircles,
+            useGPU: msg.useGPU,
+          });
+        }
+      });
+      vscode.postMessage({ command: 'ready' });
+    };
+  </script>
+
+  <!-- D3 injected here by extension.js -->
+  <!-- fits-viewer module injected here by extension.js -->
+  __FITS_VIEWER_SCRIPTS__
+</body>
+
 </html>
