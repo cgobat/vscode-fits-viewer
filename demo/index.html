@@ -13,10 +13,21 @@
     body {
       margin: 0;
       padding: 0;
-      background: var(--vscode-editor-background, #fff);
-      color: var(--vscode-editor-foreground, #333);
+      background: #fff;
+      color: #333;
       font-family: 'Roboto', sans-serif;
       font-size: 12px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1e1e1e;
+        color: #ccc;
+      }
+
+      #controls {
+        background: #1e1e1e;
+      }
     }
 
     #controls {
@@ -30,7 +41,7 @@
       align-items: center;
       padding: 8px 16px;
       border-radius: 0 0 8px 8px;
-      background: var(--vscode-editor-background, #fff);
+      background: #fff;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
       transition: opacity 0.3s, transform 0.3s;
     }
@@ -58,25 +69,7 @@
       height: 100vh;
     }
   </style>
-  <!-- Apply theme tokens before first paint to avoid flash -->
-  <script>
-    (function () {
-      const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const tokens = dark ? {
-        '--vscode-editor-foreground': '#cccccc',
-        '--vscode-editor-background': '#1e1e1e',
-        '--vscode-progressBar-background': '#0078d4',
-        '--vscode-commandCenter-inactiveBorder': 'rgba(255,255,255,0.15)',
-      } : {
-        '--vscode-editor-foreground': '#333333',
-        '--vscode-editor-background': '#ffffff',
-        '--vscode-progressBar-background': '#0078d4',
-        '--vscode-commandCenter-inactiveBorder': 'rgba(0,0,0,0.15)',
-      };
-      for (const [k, v] of Object.entries(tokens))
-        document.documentElement.style.setProperty(k, v);
-    })();
-  </script>
+
 </head>
 
 <body>
@@ -92,42 +85,21 @@
   <script type="module">
     import { FITSViewer } from '../lib/fits-viewer.js';
 
-    const THEMES = {
-      dark: { profileColor: 'rgba(160,160,160,0.85)', gridColor: '#cccccc' },
-      light: { profileColor: 'rgba(0,80,200,0.85)', gridColor: '#333333' },
-    };
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
 
-    function themeColors() {
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const t = isDark ? THEMES.dark : THEMES.light;
-      const tokens = isDark ? {
-        '--vscode-editor-foreground': '#cccccc',
-        '--vscode-editor-background': '#1e1e1e',
-        '--vscode-progressBar-background': '#0078d4',
-        '--vscode-commandCenter-inactiveBorder': 'rgba(255,255,255,0.15)',
-      } : {
-        '--vscode-editor-foreground': '#333333',
-        '--vscode-editor-background': '#ffffff',
-        '--vscode-progressBar-background': '#0078d4',
-        '--vscode-commandCenter-inactiveBorder': 'rgba(0,0,0,0.15)',
-      };
-      for (const [k, v] of Object.entries(tokens))
-        document.documentElement.style.setProperty(k, v);
-      return t;
+    function themeColors(dark) {
+      return dark
+        ? { profileColor: 'rgba(160,160,160,0.85)', gridColor: '#cccccc' }
+        : { profileColor: 'rgba(0,80,200,0.85)', gridColor: '#333333' };
     }
-
-    let theme = themeColors();
 
     const viewer = new FITSViewer(document.getElementById('viewer'), {
       onOpenExternal: (url) => window.open(url, '_blank'),
-      profileColor: theme.profileColor,
-      gridColor: theme.gridColor,
+      ...themeColors(mq.matches),
     });
 
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-      theme = themeColors();
-      viewer.options.profileColor = theme.profileColor;
-      viewer.options.gridColor = theme.gridColor;
+    mq.addEventListener('change', (e) => {
+      Object.assign(viewer.options, themeColors(e.matches));
       viewer._updateColor();
     });
 
