@@ -10,3 +10,5 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 *.gif
 .token
+.claude
+.DS_Store

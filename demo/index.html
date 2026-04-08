@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FITS Viewer Demo</title>
+  <link rel="stylesheet" href="../style.css" />
+  <style>
+    /* font */
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #333;
+      font-family: 'Roboto', sans-serif;
+      font-size: 12px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1e1e1e;
+        color: #ccc;
+      }
+
+      #controls {
+        background: #1e1e1e;
+      }
+    }
+
+    #controls {
+      position: fixed;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 16px;
+      border-radius: 0 0 8px 8px;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      transition: opacity 0.3s, transform 0.3s;
+    }
+
+    #controls.hidden {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-100%);
+      pointer-events: none;
+    }
+
+    #controls input[type="file"] {
+      color: inherit;
+    }
+
+    #controls label {
+      font-family: 'Roboto', sans-serif;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    #viewer {
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+
+</head>
+
+<body>
+  <div id="controls">
+    <input type="file" id="fileInput" accept=".fits,.fit,.fts" />
+    <label><input type="checkbox" id="autoZScale" checked /> Auto Z-scale</label>
+    <label><input type="checkbox" id="useGPU" checked /> GPU</label>
+    <label><input type="checkbox" id="aperture" checked /> Aperture circles</label>
+  </div>
+  <div id="viewer"></div>
+
+  <script src="../d3.v7.min.js"></script>
+  <script type="module">
+    import { FITSViewer } from '../lib/fits-viewer.js';
+
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function themeColors(dark) {
+      return dark
+        ? { profileColor: 'rgba(160,160,160,0.85)', gridColor: '#cccccc' }
+        : { profileColor: 'rgba(0,80,200,0.85)', gridColor: '#333333' };
+    }
+
+    const viewer = new FITSViewer(document.getElementById('viewer'), {
+      onOpenExternal: (url) => window.open(url, '_blank'),
+      ...themeColors(mq.matches),
+    });
+
+    mq.addEventListener('change', (e) => {
+      Object.assign(viewer.options, themeColors(e.matches));
+      viewer._updateColor();
+    });
+
+    const controls = document.getElementById('controls');
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const buffer = await file.arrayBuffer();
+      await viewer.loadFromArrayBuffer(buffer, file.name);
+      controls.classList.add('hidden');
+    });
+
+    // Reveal controls when mouse is near the top edge
+    document.addEventListener('mousemove', (e) => {
+      if (e.clientY < 20) {
+        controls.classList.remove('hidden');
+      } else if (e.clientY > 80) {
+        controls.classList.add('hidden');
+      }
+    });
+
+    function syncSettings() {
+      viewer.updateSettings({
+        autoZScale: document.getElementById('autoZScale').checked,
+        useGPU: document.getElementById('useGPU').checked,
+        drawApertureCircles: document.getElementById('aperture').checked,
+      });
+    }
+
+    document.getElementById('autoZScale').addEventListener('change', syncSettings);
+    document.getElementById('useGPU').addEventListener('change', syncSettings);
+    document.getElementById('aperture').addEventListener('change', syncSettings);
+  </script>
+</body>
+
+</html>

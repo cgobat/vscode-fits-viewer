@@ -50,12 +50,12 @@ html {
   flex-direction: column;
 }
 
+
 #spinner {
-  position: absolute;
   width: 50px;
   height: 50px;
-  border: 5px solid var(--vscode-editor-foreground);
-  border-top: 5px solid var(--vscode-progressBar-background);
+  border: 5px solid var(--vscode-editor-foreground, #888);
+  border-top: 5px solid var(--vscode-progressBar-background, #0078d4);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -80,13 +80,23 @@ canvas {
 }
 
 .grid-container {
-  position: relative;
-  height: 100%;
   display: grid;
-  grid-template-columns: auto 100px;
-  grid-template-rows: auto 100px;
-  flex-grow: 1;
   min-height: 0;
+}
+
+.image-grid-container {
+  grid-template-columns: max-content 100px;
+  grid-template-rows: max-content 100px;
+  width: 100%;
+  height: 100%;
+  place-content: center;
+}
+
+.header-grid-container {
+  grid-template-columns: 1fr 100px;
+  grid-template-rows: 1fr 100px;
+  width: 100%;
+  height: 100%;
 }
 
 .overlay {
@@ -118,7 +128,7 @@ td {
   text-align: left;
   padding: 2px 8px;
   /* white-space: nowrap;  */
-  border-bottom: var(--vscode-commandCenter-inactiveBorder) 1px solid;
+  border-bottom: var(--vscode-commandCenter-inactiveBorder, rgba(128,128,128,0.3)) 1px solid;
 }
 
 th:nth-child(1),
@@ -142,7 +152,7 @@ tr {
 }
 
 tr:hover {
-  background-color: var(--vscode-commandCenter-inactiveBorder);
+  background-color: var(--vscode-commandCenter-inactiveBorder, rgba(128,128,128,0.15));
 }
 
 .header-container {
@@ -150,6 +160,7 @@ tr:hover {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .search-controls {
@@ -160,15 +171,15 @@ tr:hover {
 
 #searchInput {
   padding: 8px;
-  border: 1px solid var(--vscode-commandCenter-inactiveBorder);
+  border: 1px solid var(--vscode-commandCenter-inactiveBorder, rgba(128,128,128,0.3));
   border-radius: 4px;
-  color: var(--vscode-editor-foreground);
-  background-color: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground, inherit);
+  background-color: var(--vscode-editor-background, transparent);
   width: calc(100% - 70px);
 }
 
 #resetButton {
-  color: var(--vscode-editor-foreground);
+  color: var(--vscode-editor-foreground, inherit);
   opacity: 0.5;
   cursor: pointer;
   margin-left: 10px;
