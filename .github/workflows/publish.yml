@@ -27,7 +27,20 @@ jobs:
       - name: Install vsce
         run: npm install -g vsce
 
+      - name: Package extension
+        run: |
+          vsce package
+          echo "VSIX_PATH=$(ls -1 *.vsix | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension-vsix
+          path: ${{ env.VSIX_PATH }}
+          if-no-files-found: error
+
       - name: Publish
-        run: vsce publish -p $VSCE_PAT
+        run: vsce publish --packagePath "$VSIX_PATH" -p "$VSCE_PAT"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSIX_PATH: ${{ env.VSIX_PATH }}
