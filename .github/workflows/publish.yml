@@ -43,4 +43,3 @@ jobs:
         run: vsce publish --packagePath "$VSIX_PATH" -p "$VSCE_PAT"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-          VSIX_PATH: ${{ env.VSIX_PATH }}
